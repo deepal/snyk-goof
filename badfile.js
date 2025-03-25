@@ -1,57 +1,64 @@
-// Example vulnerable JavaScript code for testing with Snyk
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
 
-function processUserInput(userInput) {
-  // Vulnerability: Using eval() with unsanitized user input
-  eval("console.log(" + userInput + ")");
-}
+const app = express();
+app.use(express.urlencoded({ extended: true }));
 
-// Example of how a malicious user might exploit this vulnerability
-const maliciousInput = "process.mainModule.require('child_process').execSync('rm -rf /')"; // Simulate dangerous command
+const db = new sqlite3.Database(':memory:'); // In-memory database for testing
 
-// Uncommenting the next line would execute the malicious code if the code were run.
-// processUserInput(maliciousInput);
+// Create a simple table
+db.serialize(() => {
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT);");
+    db.run("INSERT INTO users (username, password) VALUES ('admin', 'password');");
+    db.run("INSERT INTO users (username, password) VALUES ('user', 'secure_pass');");
 
-function insecureDeserialization(serializedData) {
-    // Vulnerability: Insecure deserialization using JSON.parse, which can be dangerous if the serialized data is untrusted.
-    try {
-        const obj = JSON.parse(serializedData);
-        console.log(obj.name); // Example usage, could be more dangerous.
-        return obj;
-    } catch (error) {
-        console.error("Error parsing JSON:", error);
-        return null;
-    }
-}
+});
 
-// Example of potentially malicious serialized data.
-const serializedData = '{"constructor": {"prototype": {"isAdmin": true}}, "name": "test"}'; //Prototype pollution.
-//insecureDeserialization(serializedData);
 
-function insecureFileRead(filename) {
-    //Vulnerability: Path traversal.
-    const fs = require('fs');
-    try {
-        const data = fs.readFileSync(filename, 'utf8');
-        console.log(data);
-        return data;
-    } catch (error) {
-        console.error("Error reading file:", error);
-        return null;
-    }
-}
+app.post('/login', (req, res) => {
+    const username = req.body.username;
+    const password = req.body.password;
 
-//Example of malicious file path.
-//insecureFileRead("../../../etc/passwd");
+    // Vulnerable SQL query construction
+    const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
 
-function regexDoS(input) {
-  //Vulnerability: Regular expression denial of service (ReDoS).
-    const regex = /^(a+)+$/;
-    if(regex.test(input)){
-      console.log("match");
-    } else {
-      console.log("no match");
-    }
-}
+    db.get(query, [], (err, row) => {
+        if (err) {
+            return res.status(500).send('Internal Server Error');
+        }
 
-//Example of malicious input.
-//regexDoS("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
+        if (row) {
+            res.send('Login successful!');
+        } else {
+            res.status(401).send('Login failed.');
+        }
+    });
+});
+
+app.get('/', (req, res) => {
+    res.send(`
+    <form method="POST" action="/login">
+      <label for="username">Username:</label><br>
+      <input type="text" id="username" name="username"><br>
+      <label for="password">Password:</label><br>
+      <input type="password" id="password" name="password"><br><br>
+      <input type="submit" value="Submit">
+    </form>
+  `);
+});
+
+app.listen(3000, () => {
+    console.log('Server listening on port 3000');
+});
+
+// Example of a malicious payload:
+// username: 'admin' --
+// password: 'anything'
+
+// Or to get all users:
+// username: 'admin' OR '1'='1'
+// password: 'anything'
+
+//Or to get the admin password:
+// username: 'admin' --
+// password:'anything' UNION SELECT null, password, null from users where username = 'admin'
